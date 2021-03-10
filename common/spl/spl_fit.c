@@ -9,9 +9,10 @@
 #include <boot_rkimg.h>
 #include <errno.h>
 #include <image.h>
-#include <spl.h>
 #include <malloc.h>
 #include <mtd_blk.h>
+#include <spl.h>
+#include <spl_ab.h>
 #include <linux/libfdt.h>
 
 #ifndef CONFIG_SYS_BOOTM_LEN
@@ -196,9 +197,9 @@ static int spl_load_fit_image(struct spl_load_info *info, ulong sector,
 		load_addr = image_info->load_addr;
 
 	if (image_comp != IH_COMP_NONE && image_comp != IH_COMP_ZIMAGE) {
-		/* Empirically, 1MB is enough for U-Boot, tee and atf */
+		/* Empirically, 2MB is enough for U-Boot, tee and atf */
 		if (fit_image_get_comp_addr(fit, node, &comp_addr))
-			comp_addr = load_addr + SZ_1M;
+			comp_addr = load_addr + FIT_MAX_SPL_IMAGE_SZ;
 	} else {
 		comp_addr = load_addr;
 	}
@@ -790,10 +791,19 @@ int spl_load_simple_fit(struct spl_image_info *spl_image,
 #ifdef CONFIG_SPL_KERNEL_BOOT
 			ret = spl_load_kernel_fit(spl_image, info);
 #endif
-			return ret;
+			break;
 		}
 	}
-
+#ifdef CONFIG_SPL_AB
+	/*
+	 * If boot fail in spl, spl must decrease 1. If boot
+	 * successfully, it is no need to do that and U-boot will
+	 * always to decrease 1. If in thunderboot process,
+	 * always need to decrease 1.
+	 */
+	if (IS_ENABLED(CONFIG_SPL_KERNEL_BOOT) || ret)
+		spl_ab_decrease_tries(info->dev);
+#endif
 	return ret;
 }
 

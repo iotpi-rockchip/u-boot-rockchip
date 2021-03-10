@@ -141,7 +141,38 @@ function generate_bl32_node()
 	LOADABLE_OPTEE=", \"optee\""
 	echo "		};"
 }
+
+function generate_mcu_node()
+{
+	if [ -z ${MCU_LOAD_ADDR} ]; then
+		return
+	fi
+
+	echo "		mcu {
+			description = \"mcu\";
+			type = \"standalone\";
+			arch = \"riscv\";
+			data = /incbin/(\"./mcu.bin${SUFFIX}\");
+			compression = \"${COMPRESSION}\";
+			load = <0x"${MCU_LOAD_ADDR}">;
+			hash {
+				algo = \"sha256\";
+			};"
+	if [ "${COMPRESSION}" == "gzip" ]; then
+		echo "			digest {
+				value = /incbin/(\"./mcu.bin.digest\");
+				algo = \"sha256\";
+			};"
+		openssl dgst -sha256 -binary -out mcu.bin.digest mcu.bin
+		gzip -k -f -9 mcu.bin
+	fi
+
+	STANDALONE_SIGN=", \"standalone\""
+	STANDALONE_MCU="standalone = \"mcu\";"
+	echo "		};"
+}
 ########################################################################################################
+THIS_PLAT=`sed -n "/CONFIG_DEFAULT_DEVICE_TREE/p" .config | awk -F "=" '{ print $2 }' | tr -d '"'`
 
 cat << EOF
 /*
@@ -163,6 +194,7 @@ EOF
 	generate_uboot_node
 	generate_bl31_node
 	generate_bl32_node
+	generate_mcu_node
 	generate_kfdt_node
 
 cat << EOF
@@ -181,17 +213,17 @@ cat << EOF
 	configurations {
 		default = "conf";
 		conf {
-			description = "Rockchip armv8 with ATF";
+			description = "${THIS_PLAT}";
 			rollback-index = <0x0>;
-			burn-key-hash = <0>;
 			firmware = "atf-1";
 			loadables = "uboot"${LOADABLE_ATF}${LOADABLE_OPTEE};
+			${STANDALONE_MCU}
 			fdt = "fdt";
 			signature {
 				algo = "sha256,rsa2048";
 				padding = "pss";
 				key-name-hint = "dev";
-				sign-images = "fdt", "firmware", "loadables";
+				sign-images = "fdt", "firmware", "loadables"${STANDALONE_SIGN};
 			};
 		};
 	};

@@ -80,6 +80,7 @@ if [ -f ${srctree}/dts/kern.dtb ]; then
 		};"
 fi
 ########################################################################################################
+THIS_PLAT=`sed -n "/CONFIG_DEFAULT_DEVICE_TREE/p" .config | awk -F "=" '{ print $2 }' | tr -d '"'`
 
 cat << EOF
 /*
@@ -145,9 +146,8 @@ cat  << EOF
 	configurations {
 		default = "conf";
 		conf {
-			description = "Rockchip armv7 with OP-TEE";
+			description = "${THIS_PLAT}";
 			rollback-index = <0x0>;
-			burn-key-hash = <0>;
 			firmware = "optee";
 			loadables = "uboot";
 			fdt = "fdt";

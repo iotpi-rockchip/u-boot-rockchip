@@ -402,19 +402,35 @@ char *mtd_part_parse(void)
 			 (int)(size_t)info.start << 9,
 			 info.name);
 		strcat(mtd_part_info, ",");
-		if (part_get_info(dev_desc, p + 1, &info)) {
-			/* Nand flash is erased by block and gpt table just
-			 * resserve 33 sectors for the last partition. This
-			 * will erase the backup gpt table by user program,
-			 * so reserve one block.
-			 */
-			snprintf(mtd_part_info_p, data_len - 1, "0x%x@0x%x(%s)",
-				 (int)(size_t)(info.size -
-				 (info.size - 1) %
-				 (mtd->erasesize >> 9) - 1) << 9,
-				 (int)(size_t)info.start << 9,
-				 info.name);
-			break;
+		if (part_get_info(dev_desc, p + 1, &info) &&
+		    (info.size + info.start + 33) == dev_desc->lba) {
+			if (dev_desc->devnum == BLK_MTD_SPI_NOR) {
+				/* Nor is 64KB erase block(kernel) and gpt table just
+				* resserve 33 sectors for the last partition. This
+				* will erase the backup gpt table by user program,
+				* so reserve one block.
+				*/
+				snprintf(mtd_part_info_p, data_len - 1, "0x%x@0x%x(%s)",
+					(int)(size_t)(info.size -
+					(info.size - 1) %
+					(0x10000 >> 9) - 1) << 9,
+					(int)(size_t)info.start << 9,
+					info.name);
+				break;
+			} else {
+				/* Nand flash is erased by block and gpt table just
+				* resserve 33 sectors for the last partition. This
+				* will erase the backup gpt table by user program,
+				* so reserve one block.
+				*/
+				snprintf(mtd_part_info_p, data_len - 1, "0x%x@0x%x(%s)",
+					(int)(size_t)(info.size -
+					(info.size - 1) %
+					(mtd->erasesize >> 9) - 1) << 9,
+					(int)(size_t)info.start << 9,
+					info.name);
+				break;
+			}
 		}
 		length = strlen(mtd_part_info_temp);
 		data_len -= length;
@@ -486,6 +502,7 @@ ulong mtd_dread(struct udevice *udev, lbaint_t start,
 	}
 }
 
+#if CONFIG_IS_ENABLED(MTD_WRITE)
 ulong mtd_dwrite(struct udevice *udev, lbaint_t start,
 		 lbaint_t blkcnt, const void *src)
 {
@@ -587,7 +604,8 @@ ulong mtd_derase(struct udevice *udev, lbaint_t start,
 		return 0;
 
 	if (desc->devnum == BLK_MTD_NAND ||
-	    desc->devnum == BLK_MTD_SPI_NAND) {
+	    desc->devnum == BLK_MTD_SPI_NAND ||
+	    desc->devnum == BLK_MTD_SPI_NOR) {
 		ret = mtd_map_erase(mtd, off, len);
 		if (ret)
 			return ret;
@@ -597,6 +615,7 @@ ulong mtd_derase(struct udevice *udev, lbaint_t start,
 
 	return 0;
 }
+#endif
 
 static int mtd_blk_probe(struct udevice *udev)
 {
@@ -647,7 +666,7 @@ static int mtd_blk_probe(struct udevice *udev)
 
 static const struct blk_ops mtd_blk_ops = {
 	.read	= mtd_dread,
-#ifndef CONFIG_SPL_BUILD
+#if CONFIG_IS_ENABLED(MTD_WRITE)
 	.write	= mtd_dwrite,
 	.erase	= mtd_derase,
 #endif

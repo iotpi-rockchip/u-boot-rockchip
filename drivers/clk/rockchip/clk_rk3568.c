@@ -493,6 +493,8 @@ static int rk3568_pmuclk_probe(struct udevice *dev)
 			priv->ppll_hz = PPLL_HZ;
 	}
 
+	/* Ungate PCIe30phy refclk_m and refclk_n */
+	rk_clrsetreg(&priv->pmucru->pmu_clkgate_con[2], 0x3 << 13, 0 << 13);
 	return 0;
 }
 
@@ -742,6 +744,7 @@ static ulong rk3568_bus_get_clk(struct rk3568_clk_priv *priv, ulong clk_id)
 			rate = OSC_HZ;
 		break;
 	case PCLK_BUS:
+	case PCLK_WDT_NS:
 		con = readl(&cru->clksel_con[50]);
 		sel = (con & PCLK_BUS_SEL_MASK) >> PCLK_BUS_SEL_SHIFT;
 		if (sel == PCLK_BUS_SEL_100M)
@@ -781,6 +784,7 @@ static ulong rk3568_bus_set_clk(struct rk3568_clk_priv *priv,
 			     src_clk << ACLK_BUS_SEL_SHIFT);
 		break;
 	case PCLK_BUS:
+	case PCLK_WDT_NS:
 		if (rate == 100 * MHz)
 			src_clk = PCLK_BUS_SEL_100M;
 		else if (rate == 75 * MHz)
@@ -2059,6 +2063,91 @@ static ulong rk3568_ebc_set_clk(struct rk3568_clk_priv *priv, ulong rate)
 
 	return rk3568_ebc_get_clk(priv);
 }
+
+static ulong rk3568_rkvdec_get_clk(struct rk3568_clk_priv *priv, ulong clk_id)
+{
+	struct rk3568_cru *cru = priv->cru;
+	u32 con, div, src, p_rate;
+
+	switch (clk_id) {
+	case ACLK_RKVDEC_PRE:
+	case ACLK_RKVDEC:
+		con = readl(&cru->clksel_con[47]);
+		src = (con & ACLK_RKVDEC_SEL_MASK) >> ACLK_RKVDEC_SEL_SHIFT;
+		div = (con & ACLK_RKVDEC_DIV_MASK) >> ACLK_RKVDEC_DIV_SHIFT;
+		if (src == ACLK_RKVDEC_SEL_CPLL)
+			p_rate = priv->cpll_hz;
+		else
+			p_rate = priv->gpll_hz;
+		return DIV_TO_RATE(p_rate, div);
+	case CLK_RKVDEC_CORE:
+		con = readl(&cru->clksel_con[49]);
+		src = (con & CLK_RKVDEC_CORE_SEL_MASK)
+		      >> CLK_RKVDEC_CORE_SEL_SHIFT;
+		div = (con & CLK_RKVDEC_CORE_DIV_MASK)
+		      >> CLK_RKVDEC_CORE_DIV_SHIFT;
+		if (src == CLK_RKVDEC_CORE_SEL_CPLL)
+			p_rate = priv->cpll_hz;
+		else if (src == CLK_RKVDEC_CORE_SEL_NPLL)
+			p_rate = priv->npll_hz;
+		else if (src == CLK_RKVDEC_CORE_SEL_VPLL)
+			p_rate = priv->vpll_hz;
+		else
+			p_rate = priv->gpll_hz;
+		return DIV_TO_RATE(p_rate, div);
+	default:
+		return -ENOENT;
+	}
+}
+
+static ulong rk3568_rkvdec_set_clk(struct rk3568_clk_priv *priv,
+				   ulong clk_id, ulong rate)
+{
+	struct rk3568_cru *cru = priv->cru;
+	int src_clk_div, src, p_rate;
+
+	switch (clk_id) {
+	case ACLK_RKVDEC_PRE:
+	case ACLK_RKVDEC:
+		src = (readl(&cru->clksel_con[47]) & ACLK_RKVDEC_SEL_MASK)
+		      >> ACLK_RKVDEC_SEL_SHIFT;
+		if (src == ACLK_RKVDEC_SEL_CPLL)
+			p_rate = priv->cpll_hz;
+		else
+			p_rate = priv->gpll_hz;
+		src_clk_div = DIV_ROUND_UP(p_rate, rate);
+		assert(src_clk_div - 1 <= 31);
+		rk_clrsetreg(&cru->clksel_con[47],
+			     ACLK_RKVDEC_SEL_MASK |
+			     ACLK_RKVDEC_DIV_MASK,
+			     (src << ACLK_RKVDEC_SEL_SHIFT) |
+			     (src_clk_div - 1) << ACLK_RKVDEC_DIV_SHIFT);
+		break;
+	case CLK_RKVDEC_CORE:
+		src = (readl(&cru->clksel_con[49]) & CLK_RKVDEC_CORE_SEL_MASK)
+		      >> CLK_RKVDEC_CORE_SEL_SHIFT;
+		if (src == CLK_RKVDEC_CORE_SEL_CPLL)
+			p_rate = priv->cpll_hz;
+		else if (src == CLK_RKVDEC_CORE_SEL_NPLL)
+			p_rate = priv->npll_hz;
+		else if (src == CLK_RKVDEC_CORE_SEL_VPLL)
+			p_rate = priv->vpll_hz;
+		else
+			p_rate = priv->gpll_hz;
+		src_clk_div = DIV_ROUND_UP(p_rate, rate);
+		assert(src_clk_div - 1 <= 31);
+		rk_clrsetreg(&cru->clksel_con[49],
+			     CLK_RKVDEC_CORE_SEL_MASK |
+			     CLK_RKVDEC_CORE_DIV_MASK,
+			     (src << CLK_RKVDEC_CORE_SEL_SHIFT) |
+			     (src_clk_div - 1) << CLK_RKVDEC_CORE_DIV_SHIFT);
+		break;
+	default:
+		return -ENOENT;
+	}
+
+	return rk3568_rkvdec_get_clk(priv, clk_id);
+}
 #endif
 
 static ulong rk3568_clk_get_rate(struct clk *clk)
@@ -2099,6 +2188,7 @@ static ulong rk3568_clk_get_rate(struct clk *clk)
 		break;
 	case ACLK_BUS:
 	case PCLK_BUS:
+	case PCLK_WDT_NS:
 		rate = rk3568_bus_get_clk(priv, clk->id);
 		break;
 	case ACLK_PERIMID:
@@ -2183,6 +2273,14 @@ static ulong rk3568_clk_get_rate(struct clk *clk)
 	case DCLK_EBC:
 		rate = rk3568_ebc_get_clk(priv);
 		break;
+	case ACLK_RKVDEC_PRE:
+	case ACLK_RKVDEC:
+	case CLK_RKVDEC_CORE:
+		rate = rk3568_rkvdec_get_clk(priv, clk->id);
+		break;
+	case TCLK_WDT_NS:
+		rate = OSC_HZ;
+		break;
 #endif
 	case ACLK_SECURE_FLASH:
 	case ACLK_CRYPTO_NS:
@@ -2252,95 +2350,104 @@ static ulong rk3568_clk_set_rate(struct clk *clk, ulong rate)
 		break;
 	case ACLK_BUS:
 	case PCLK_BUS:
-		rate = rk3568_bus_set_clk(priv, clk->id, rate);
+	case PCLK_WDT_NS:
+		ret = rk3568_bus_set_clk(priv, clk->id, rate);
 		break;
 	case ACLK_PERIMID:
 	case HCLK_PERIMID:
-		rate = rk3568_perimid_set_clk(priv, clk->id, rate);
+		ret = rk3568_perimid_set_clk(priv, clk->id, rate);
 		break;
 	case ACLK_TOP_HIGH:
 	case ACLK_TOP_LOW:
 	case HCLK_TOP:
 	case PCLK_TOP:
-		rate = rk3568_top_set_clk(priv, clk->id, rate);
+		ret = rk3568_top_set_clk(priv, clk->id, rate);
 		break;
 	case CLK_I2C1:
 	case CLK_I2C2:
 	case CLK_I2C3:
 	case CLK_I2C4:
 	case CLK_I2C5:
-		rate = rk3568_i2c_set_clk(priv, clk->id, rate);
+		ret = rk3568_i2c_set_clk(priv, clk->id, rate);
 		break;
 	case CLK_SPI0:
 	case CLK_SPI1:
 	case CLK_SPI2:
 	case CLK_SPI3:
-		rate = rk3568_spi_set_clk(priv, clk->id, rate);
+		ret = rk3568_spi_set_clk(priv, clk->id, rate);
 		break;
 	case CLK_PWM1:
 	case CLK_PWM2:
 	case CLK_PWM3:
-		rate = rk3568_pwm_set_clk(priv, clk->id, rate);
+		ret = rk3568_pwm_set_clk(priv, clk->id, rate);
 		break;
 	case CLK_SARADC:
 	case CLK_TSADC_TSEN:
 	case CLK_TSADC:
-		rate = rk3568_adc_set_clk(priv, clk->id, rate);
+		ret = rk3568_adc_set_clk(priv, clk->id, rate);
 		break;
 	case HCLK_SDMMC0:
 	case CLK_SDMMC0:
 	case CLK_SDMMC1:
 	case CLK_SDMMC2:
-		rate = rk3568_sdmmc_set_clk(priv, clk->id, rate);
+		ret = rk3568_sdmmc_set_clk(priv, clk->id, rate);
 		break;
 	case SCLK_SFC:
-		rate = rk3568_sfc_set_clk(priv, rate);
+		ret = rk3568_sfc_set_clk(priv, rate);
 		break;
 	case NCLK_NANDC:
-		rate = rk3568_nand_set_clk(priv, rate);
+		ret = rk3568_nand_set_clk(priv, rate);
 		break;
 	case CCLK_EMMC:
-		rate = rk3568_emmc_set_clk(priv, rate);
+		ret = rk3568_emmc_set_clk(priv, rate);
 		break;
 #ifndef CONFIG_SPL_BUILD
 	case ACLK_VOP:
-		rate = rk3568_aclk_vop_set_clk(priv, rate);
+		ret = rk3568_aclk_vop_set_clk(priv, rate);
 		break;
 	case DCLK_VOP0:
 	case DCLK_VOP1:
 	case DCLK_VOP2:
-		rate = rk3568_dclk_vop_set_clk(priv, clk->id, rate);
+		ret = rk3568_dclk_vop_set_clk(priv, clk->id, rate);
 		break;
 	case SCLK_GMAC0:
 	case CLK_MAC0_2TOP:
 	case CLK_MAC0_REFOUT:
-		rate = rk3568_gmac_src_set_clk(priv, 0, rate);
+		ret = rk3568_gmac_src_set_clk(priv, 0, rate);
 		break;
 	case CLK_MAC0_OUT:
-		rate = rk3568_gmac_out_set_clk(priv, 0, rate);
+		ret = rk3568_gmac_out_set_clk(priv, 0, rate);
 		break;
 	case SCLK_GMAC0_RX_TX:
-		rate = rk3568_gmac_tx_rx_set_clk(priv, 0, rate);
+		ret = rk3568_gmac_tx_rx_set_clk(priv, 0, rate);
 		break;
 	case CLK_GMAC0_PTP_REF:
-		rate = rk3568_gmac_ptp_ref_set_clk(priv, 0, rate);
+		ret = rk3568_gmac_ptp_ref_set_clk(priv, 0, rate);
 		break;
 	case SCLK_GMAC1:
 	case CLK_MAC1_2TOP:
 	case CLK_MAC1_REFOUT:
-		rate = rk3568_gmac_src_set_clk(priv, 1, rate);
+		ret = rk3568_gmac_src_set_clk(priv, 1, rate);
 		break;
 	case CLK_MAC1_OUT:
-		rate = rk3568_gmac_out_set_clk(priv, 1, rate);
+		ret = rk3568_gmac_out_set_clk(priv, 1, rate);
 		break;
 	case SCLK_GMAC1_RX_TX:
-		rate = rk3568_gmac_tx_rx_set_clk(priv, 1, rate);
+		ret = rk3568_gmac_tx_rx_set_clk(priv, 1, rate);
 		break;
 	case CLK_GMAC1_PTP_REF:
-		rate = rk3568_gmac_ptp_ref_set_clk(priv, 1, rate);
+		ret = rk3568_gmac_ptp_ref_set_clk(priv, 1, rate);
 		break;
 	case DCLK_EBC:
-		rate = rk3568_ebc_set_clk(priv, rate);
+		ret = rk3568_ebc_set_clk(priv, rate);
+		break;
+	case ACLK_RKVDEC_PRE:
+	case ACLK_RKVDEC:
+	case CLK_RKVDEC_CORE:
+		ret = rk3568_rkvdec_set_clk(priv, clk->id, rate);
+		break;
+	case TCLK_WDT_NS:
+		ret = OSC_HZ;
 		break;
 #endif
 	case ACLK_SECURE_FLASH:
@@ -2350,7 +2457,7 @@ static ulong rk3568_clk_set_rate(struct clk *clk, ulong rate)
 	case CLK_CRYPTO_NS_RNG:
 	case CLK_CRYPTO_NS_CORE:
 	case CLK_CRYPTO_NS_PKA:
-		rate = rk3568_crypto_set_rate(priv, clk->id, rate);
+		ret = rk3568_crypto_set_rate(priv, clk->id, rate);
 		break;
 	case CPLL_500M:
 	case CPLL_333M:
@@ -2360,7 +2467,7 @@ static ulong rk3568_clk_set_rate(struct clk *clk, ulong rate)
 	case CPLL_62P5M:
 	case CPLL_50M:
 	case CPLL_25M:
-		rate = rk3568_cpll_div_set_rate(priv, clk->id, rate);
+		ret = rk3568_cpll_div_set_rate(priv, clk->id, rate);
 		break;
 	default:
 		return -ENOENT;
@@ -2610,6 +2717,38 @@ static int __maybe_unused rk3568_dclk_vop_set_parent(struct clk *clk,
 	return 0;
 }
 
+static int __maybe_unused rk3568_rkvdec_set_parent(struct clk *clk,
+						   struct clk *parent)
+{
+	struct rk3568_clk_priv *priv = dev_get_priv(clk->dev);
+	struct rk3568_cru *cru = priv->cru;
+	u32 con_id, mask, shift;
+
+	switch (clk->id) {
+	case ACLK_RKVDEC_PRE:
+		con_id = 47;
+		mask = ACLK_RKVDEC_SEL_MASK;
+		shift = ACLK_RKVDEC_SEL_SHIFT;
+		break;
+	case CLK_RKVDEC_CORE:
+		con_id = 49;
+		mask = CLK_RKVDEC_CORE_SEL_MASK;
+		shift = CLK_RKVDEC_CORE_SEL_SHIFT;
+		break;
+	default:
+		return -EINVAL;
+	}
+	if (parent->id == PLL_CPLL) {
+		rk_clrsetreg(&cru->clksel_con[con_id], mask,
+			     ACLK_RKVDEC_SEL_CPLL << shift);
+	} else {
+		rk_clrsetreg(&cru->clksel_con[con_id], mask,
+			     ACLK_RKVDEC_SEL_GPLL << shift);
+	}
+
+	return 0;
+}
+
 static int rk3568_clk_set_parent(struct clk *clk, struct clk *parent)
 {
 	switch (clk->id) {
@@ -2625,6 +2764,9 @@ static int rk3568_clk_set_parent(struct clk *clk, struct clk *parent)
 	case DCLK_VOP1:
 	case DCLK_VOP2:
 		return rk3568_dclk_vop_set_parent(clk, parent);
+	case ACLK_RKVDEC_PRE:
+	case CLK_RKVDEC_CORE:
+		return rk3568_rkvdec_set_parent(clk, parent);
 	default:
 		return -ENOENT;
 	}
@@ -2675,7 +2817,7 @@ static void rk3568_clk_init(struct rk3568_clk_priv *priv)
 
 #ifdef CONFIG_SPL_BUILD
 	ret = rk3568_bus_set_clk(priv, ACLK_BUS, 150000000);
-	if (ret)
+	if (ret < 0)
 		printf("Fail to set the ACLK_BUS clock.\n");
 #endif
 
