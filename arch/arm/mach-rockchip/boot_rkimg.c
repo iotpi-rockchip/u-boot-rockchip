@@ -243,18 +243,11 @@ void rockchip_set_bootdev(struct blk_desc *desc)
  * some special boards.
  */
 #define KEY_DOWN_MIN_VAL	0
-#define KEY_DOWN_MAX_VAL	30
+#define KEY_DOWN_MAX_VAL	200
 
 __weak int rockchip_dnl_key_pressed(void)
 {
-#if defined(CONFIG_DM_KEY)
-#ifdef CONFIG_CMD_ROCKUSB
-	return key_is_pressed(key_read(KEY_VOLUMEUP));
-#else
-	return key_is_pressed(key_read(KEY_MENU));
-#endif
 
-#elif defined(CONFIG_ADC)
 	const void *blob = gd->fdt_blob;
 	int node, ret, channel = 1;
 	u32 val, chns[2];
@@ -272,7 +265,6 @@ __weak int rockchip_dnl_key_pressed(void)
 	}
 
 	return ((val >= KEY_DOWN_MIN_VAL) && (val <= KEY_DOWN_MAX_VAL));
-#endif
 
 	return 0;
 }
