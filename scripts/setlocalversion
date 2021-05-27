@@ -160,9 +160,11 @@ res="$(collect_files localversion*)"
 if test ! "$srctree" -ef .; then
 	res="$res$(collect_files "$srctree"/localversion*)"
 fi
+XML_PATH=`readlink -f ../.repo/manifest.xml`
+XML_NAME=${XML_PATH##*/}
 
 # CONFIG_LOCALVERSION and LOCALVERSION (if set)
-res="${res}${CONFIG_LOCALVERSION}${LOCALVERSION}"
+res="${res}${CONFIG_LOCALVERSION}\(${XML_NAME}\)${LOCALVERSION}"
 
 # scm version string if not at a tagged commit
 if test "$CONFIG_LOCALVERSION_AUTO" = "y"; then
