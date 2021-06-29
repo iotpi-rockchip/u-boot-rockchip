@@ -38,10 +38,20 @@ static int misc_require_recovery(u32 bcb_offset)
 
 	cnt = DIV_ROUND_UP(sizeof(struct bootloader_message), dev_desc->blksz);
 	bmsg = memalign(ARCH_DMA_MINALIGN, cnt * dev_desc->blksz);
-	if (blk_dread(dev_desc, part.start + bcb_offset, cnt, bmsg) != cnt)
+	if (blk_dread(dev_desc, part.start + bcb_offset, cnt, bmsg) != cnt) {
 		recovery = 0;
-	else
+	} else {
 		recovery = !strcmp(bmsg->command, "boot-recovery");
+		if ((dev_desc->if_type == IF_TYPE_MMC && dev_desc->devnum == 1) ||
+		    (dev_desc->if_type == IF_TYPE_USB && dev_desc->devnum == 0)) {
+			if (!strcmp(bmsg->recovery, "recovery\n--rk_fwupdate\n")) {
+				if (dev_desc->if_type == IF_TYPE_MMC)
+					env_update("bootargs", "sdfwupdate");
+				else if (dev_desc->if_type == IF_TYPE_USB)
+					env_update("bootargs", "usbfwupdate");
+			}
+		}
+	}
 
 	free(bmsg);
 out:
@@ -136,6 +146,10 @@ int rockchip_get_boot_mode(void)
 		printf("boot mode: loader\n");
 		boot_mode[PH] = BOOT_MODE_LOADER;
 		clear_boot_reg = 1;
+	} else if (reg_boot_mode == BOOT_DFU) {
+		printf("boot mode: dfu\n");
+		boot_mode[PH] = BOOT_MODE_DFU;
+		clear_boot_reg = 1;
 	} else if (reg_boot_mode == BOOT_FASTBOOT) {
 		printf("boot mode: bootloader\n");
 		boot_mode[PH] = BOOT_MODE_BOOTLOADER;
@@ -215,6 +229,12 @@ int setup_boot_mode(void)
 		printf("enter UMS!\n");
 		env_set("preboot", "setenv preboot; ums mmc 0");
 		break;
+#if defined(CONFIG_CMD_DFU)
+	case BOOT_MODE_DFU:
+		printf("enter DFU!\n");
+		env_set("preboot", "setenv preboot; dfu 0 ${devtype} ${devnum}; rbrom");
+		break;
+#endif
 	case BOOT_MODE_LOADER:
 		printf("enter Rockusb!\n");
 		env_set("preboot", "setenv preboot; rockusb 0 ${devtype} ${devnum}; rbrom");

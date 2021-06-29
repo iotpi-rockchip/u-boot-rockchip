@@ -16,6 +16,7 @@
 #include <dm/uclass-id.h>
 #include <boot_rkimg.h>
 #include <rk_eink.h>
+#include <backlight.h>
 #include "rk_ebc.h"
 #include "epdlut/epd_lut.h"
 
@@ -87,6 +88,7 @@ struct rockchip_eink_display_priv {
 	struct udevice *ebc_tcon_dev;
 	struct udevice *ebc_pwr_dev;
 	int vcom;
+	struct udevice *backlight;
 };
 
 enum {
@@ -184,6 +186,7 @@ static u32 aligned_image_size_4k(struct udevice *dev)
  *  |---charge_4 logo   ---|
  *  |---charge_5 logo   ---|
  *  |---battery low logo---|
+ *  |---temp un-mirror buffer--|
  */
 static int get_addr_by_type(struct udevice *dev, u32 logo_type)
 {
@@ -213,6 +216,11 @@ static int get_addr_by_type(struct udevice *dev, u32 logo_type)
 	case EINK_LOGO_CHARGING_4:
 	case EINK_LOGO_CHARGING_5:
 	case EINK_LOGO_CHARGING_LOWPOWER:
+	/*
+	 * The MIRROR_TEMP_BUF is used to save the
+	 * non-mirror image data.
+	 */
+	case EINK_LOGO_UNMIRROR_TEMP_BUF:
 		return (plat->disp_pbuf + offset);
 	default:
 		printf("invalid logo type[%d]\n", logo_type);
@@ -267,6 +275,26 @@ static int read_grayscale(struct blk_desc *dev_desc,
 	if (blk_dread(dev_desc, blk_start, blk_count, buf) != blk_count) {
 		printf("read grayscale data failed\n");
 		return -EIO;
+	}
+
+	return 0;
+}
+
+static int image_mirror(u8 *in_buf, u8 *out_buf, u16 w, u16 h)
+{
+	int i;
+
+	if (!in_buf || !out_buf) {
+		printf("mirror in buffer or out buffer is NULL\n");
+		return -EINVAL;
+	}
+
+	for (i = 0; i < h; i++) {
+		u16 column_len = w / 2;
+		u8 *column_in = in_buf + i * column_len;
+		u8 *column_out = out_buf + (h - i - 1) * column_len;
+
+		memcpy(column_out, column_in, column_len);
 	}
 
 	return 0;
@@ -345,8 +373,30 @@ static int read_needed_logo_from_partition(struct udevice *dev,
 				printf("disp buffer is not dma aligned\n");
 				return -EINVAL;
 			}
-			read_grayscale(dev_desc, &part, offset, size,
-				       (void *)((ulong)pic_buf));
+			/*
+			 * kernel logo is transmitted to kernel to display, and
+			 * kernel will do the mirror operation, so skip kernel
+			 * logo here.
+			 */
+			if (panel->mirror && needed_logo != EINK_LOGO_KERNEL) {
+				u32 w = panel->vir_width;
+				u32 h = panel->vir_height;
+				u32 mirror_buf = 0;
+
+				mirror_buf = get_addr_by_type(dev,
+							      EINK_LOGO_UNMIRROR_TEMP_BUF);
+				if (mirror_buf <= 0) {
+					printf("get mirror buffer failed\n");
+					return -EIO;
+				}
+				read_grayscale(dev_desc, &part, offset, size,
+					       (void *)((ulong)mirror_buf));
+				image_mirror((u8 *)((ulong)mirror_buf),
+					     (u8 *)((ulong)pic_buf), w, h);
+			} else {
+				read_grayscale(dev_desc, &part, offset, size,
+					       (void *)((ulong)pic_buf));
+			}
 			flush_dcache_range((ulong)pic_buf,
 					   ALIGN((ulong)pic_buf + size,
 						 CONFIG_SYS_CACHELINE_SIZE));
@@ -474,6 +524,7 @@ static int rockchip_eink_show_logo(int cur_logo_type, int update_mode)
 	struct ebc_panel *plat;
 	struct udevice *dev;
 	static u32 loaded_logo;
+	struct rockchip_eink_display_priv *priv;
 
 	if (!eink_dev) {
 		static bool first_init = true;
@@ -498,6 +549,7 @@ static int rockchip_eink_show_logo(int cur_logo_type, int update_mode)
 	}
 
 	plat = dev_get_platdata(dev);
+	priv = dev_get_priv(dev);
 
 	ret = ebc_power_set(dev, EBC_PWR_ON);
 	if (ret) {
@@ -548,6 +600,10 @@ static int rockchip_eink_show_logo(int cur_logo_type, int update_mode)
 	}
 
 	eink_display(dev, last_logo_addr, logo_addr, WF_TYPE_GC16, update_mode);
+
+	if (priv->backlight)
+		backlight_enable(priv->backlight);
+
 	last_logo_type = cur_logo_type;
 	/*
 	 * System will boot up to kernel only when the
@@ -555,9 +611,16 @@ static int rockchip_eink_show_logo(int cur_logo_type, int update_mode)
 	 */
 	if (cur_logo_type == EINK_LOGO_UBOOT) {
 		char logo_args[64] = {0};
+		u32 uboot_logo_buf;
 
-		printf("Transmit uboot logo addr(0x%x) to kernel\n", logo_addr);
-		sprintf(logo_args, "ulogo_addr=0x%x", logo_addr);
+		if (plat->mirror)
+			uboot_logo_buf = get_addr_by_type(dev,
+							  EINK_LOGO_UNMIRROR_TEMP_BUF);
+		else
+			uboot_logo_buf = logo_addr;
+		printf("Transmit uboot logo addr(0x%x) to kernel\n",
+		       uboot_logo_buf);
+		sprintf(logo_args, "ulogo_addr=0x%x", uboot_logo_buf);
 		env_update("bootargs", logo_args);
 		ret = read_needed_logo_from_partition(dev, EINK_LOGO_KERNEL,
 						      &loaded_logo);
@@ -621,6 +684,12 @@ static int rockchip_eink_display_probe(struct udevice *dev)
 		return ret;
 	}
 
+	ret = uclass_get_device_by_phandle(UCLASS_PANEL_BACKLIGHT, dev,
+					   "backlight", &priv->backlight);
+	if (ret && ret != -ENOENT) {
+		printf("%s: Cannot get backlight: %d\n", __func__, ret);
+	}
+
 	vcom = read_vcom_from_vendor();
 	if (vcom <= 0) {
 		printf("read vcom from vendor failed, use default vcom\n");
@@ -648,6 +717,7 @@ static int rockchip_eink_display_probe(struct udevice *dev)
 	}
 
 	eink_dev = dev;
+
 	return 0;
 }
 
