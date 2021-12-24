@@ -164,6 +164,7 @@ struct dw_hdmi_i2c {
 };
 
 struct dw_hdmi {
+	int id;
 	enum dw_hdmi_devtype dev_type;
 	unsigned int version;
 	struct hdmi_data_info hdmi_data;
@@ -2261,6 +2262,15 @@ void dw_hdmi_audio_disable(struct dw_hdmi *hdmi)
 	hdmi_set_cts_n(hdmi, hdmi->audio_cts, 0);
 }
 
+int rockchip_dw_hdmi_pre_init(struct display_state *state)
+{
+	struct connector_state *conn_state = &state->conn_state;
+
+	conn_state->type = DRM_MODE_CONNECTOR_HDMIA;
+
+	return 0;
+}
+
 int rockchip_dw_hdmi_init(struct display_state *state)
 {
 	struct connector_state *conn_state = &state->conn_state;
@@ -2281,6 +2291,10 @@ int rockchip_dw_hdmi_init(struct display_state *state)
 	mode_buf = malloc(MODE_LEN * sizeof(struct drm_display_mode));
 	if (!mode_buf)
 		return -ENOMEM;
+	hdmi->id = of_alias_get_id(ofnode_to_np(hdmi_node), "hdmi");
+	if (hdmi->id < 0)
+		hdmi->id = 0;
+	conn_state->disp_info  = rockchip_get_disp_info(conn_state->type, hdmi->id);
 
 	memset(mode_buf, 0, MODE_LEN * sizeof(struct drm_display_mode));
 
@@ -2339,7 +2353,6 @@ int rockchip_dw_hdmi_init(struct display_state *state)
 					"ddc-i2c-scl-low-time-ns", 4916);
 
 	dw_hdmi_i2c_init(hdmi);
-	conn_state->type = DRM_MODE_CONNECTOR_HDMIA;
 	conn_state->output_if |= VOP_OUTPUT_IF_HDMI0;
 	conn_state->output_mode = ROCKCHIP_OUT_MODE_AAAA;
 
@@ -2446,13 +2459,15 @@ int rockchip_dw_hdmi_get_timing(struct display_state *state)
 			drm_mode_vrefresh(&hdmi->edid_data.mode_buf[i]);
 
 	drm_mode_sort(&hdmi->edid_data);
-	drm_rk_selete_output(&hdmi->edid_data, &bus_format,
+	drm_rk_selete_output(&hdmi->edid_data, conn_state, &bus_format,
 			     overscan, hdmi->dev_type);
 
 	*mode = *hdmi->edid_data.preferred_mode;
 	hdmi->vic = drm_match_cea_mode(mode);
 
 	printf("mode:%dx%d\n", mode->hdisplay, mode->vdisplay);
+	if (state->force_output)
+		bus_format = state->force_bus_format;
 	conn_state->bus_format = bus_format;
 	hdmi->hdmi_data.enc_in_bus_format = bus_format;
 	hdmi->hdmi_data.enc_out_bus_format = bus_format;

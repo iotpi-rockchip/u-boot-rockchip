@@ -323,16 +323,21 @@ static unsigned int drm_rk_select_color(struct hdmi_edid_data *edid_data,
 }
 
 void drm_rk_selete_output(struct hdmi_edid_data *edid_data,
+			  struct connector_state *conn_state,
 			  unsigned int *bus_format,
 			  struct overscan *overscan,
 			  enum dw_hdmi_devtype dev_type)
 {
 	int ret, i, screen_size;
 	struct base_disp_info base_parameter;
+	struct base2_disp_info *base2_parameter = conn_state->disp_info;
 	const struct base_overscan *scan;
 	struct base_screen_info *screen_info = NULL;
+	struct base2_screen_info *screen_info2 = NULL;
 	int max_scan = 100;
 	int min_scan = 51;
+	int offset = 0;
+	bool found = false;
 	struct blk_desc *dev_desc;
 	disk_partition_t part_info;
 	char baseparameter_buf[8 * RK_BLK_SIZE] __aligned(ARCH_DMA_MINALIGN);
@@ -347,26 +352,70 @@ void drm_rk_selete_output(struct hdmi_edid_data *edid_data,
 	else
 		*bus_format = MEDIA_BUS_FMT_YUV8_1X24;
 
-	dev_desc = rockchip_get_bootdev();
-	if (!dev_desc) {
-		printf("%s: Could not find device\n", __func__);
-		return;
-	}
+	if (!base2_parameter) {
+		dev_desc = rockchip_get_bootdev();
+		if (!dev_desc) {
+			printf("%s: Could not find device\n", __func__);
+			goto null_basep;
+		}
 
-	if (part_get_info_by_name(dev_desc, "baseparameter", &part_info) < 0) {
-		printf("Could not find baseparameter partition\n");
-		return;
-	}
+		ret = part_get_info_by_name(dev_desc, "baseparameter",
+					    &part_info);
+		if (ret < 0) {
+			printf("Could not find baseparameter partition\n");
+			goto null_basep;
+		}
 
-	ret = blk_dread(dev_desc, part_info.start, 1,
-			(void *)baseparameter_buf);
-	if (ret < 0) {
-		printf("read baseparameter failed\n");
-		return;
-	}
+read_aux:
+		ret = blk_dread(dev_desc, part_info.start + offset, 1,
+				(void *)baseparameter_buf);
+		if (ret < 0) {
+			printf("read baseparameter failed\n");
+			goto null_basep;
+		}
 
-	memcpy(&base_parameter, baseparameter_buf, sizeof(base_parameter));
-	scan = &base_parameter.scan;
+		memcpy(&base_parameter, baseparameter_buf,
+		       sizeof(base_parameter));
+		scan = &base_parameter.scan;
+
+		screen_size = sizeof(base_parameter.screen_list) /
+			sizeof(base_parameter.screen_list[0]);
+
+		for (i = 0; i < screen_size; i++) {
+			if (base_parameter.screen_list[i].type ==
+			    DRM_MODE_CONNECTOR_HDMIA) {
+				found = true;
+				screen_info = &base_parameter.screen_list[i];
+				break;
+			}
+		}
+
+		if (!found && !offset) {
+			printf("hdmi info isn't saved in main block\n");
+			offset += 16;
+			goto read_aux;
+		}
+	} else {
+		scan = &base2_parameter->overscan_info;
+		screen_size = sizeof(base2_parameter->screen_info) /
+			sizeof(base2_parameter->screen_info[0]);
+
+		for (i = 0; i < screen_size; i++) {
+			if (base2_parameter->screen_info[i].type ==
+			    DRM_MODE_CONNECTOR_HDMIA) {
+				screen_info2 =
+					&base2_parameter->screen_info[i];
+				break;
+			}
+		}
+		screen_info = malloc(sizeof(*screen_info));
+
+		screen_info->type = screen_info2->type;
+		screen_info->mode = screen_info2->resolution;
+		screen_info->format = screen_info2->format;
+		screen_info->depth = screen_info2->depthc;
+		screen_info->feature = screen_info2->feature;
+	}
 
 	if (scan->leftscale < min_scan && scan->leftscale > 0)
 		overscan->left_margin = min_scan;
@@ -388,16 +437,7 @@ void drm_rk_selete_output(struct hdmi_edid_data *edid_data,
 	else if (scan->bottomscale < max_scan && scan->bottomscale > 0)
 		overscan->bottom_margin = scan->bottomscale;
 
-	screen_size = sizeof(base_parameter.screen_list) /
-		sizeof(base_parameter.screen_list[0]);
-
-	for (i = 0; i < screen_size; i++) {
-		if (base_parameter.screen_list[i].type ==
-		    DRM_MODE_CONNECTOR_HDMIA) {
-			screen_info = &base_parameter.screen_list[i];
-			break;
-		}
-	}
+null_basep:
 
 	if (screen_info)
 		printf("base_parameter.mode:%dx%d\n",
@@ -445,6 +485,7 @@ static const struct dw_hdmi_phy_ops inno_dw_hdmi_phy_ops = {
 };
 
 static const struct rockchip_connector_funcs rockchip_dw_hdmi_funcs = {
+	.pre_init = rockchip_dw_hdmi_pre_init,
 	.init = rockchip_dw_hdmi_init,
 	.deinit = rockchip_dw_hdmi_deinit,
 	.prepare = rockchip_dw_hdmi_prepare,
