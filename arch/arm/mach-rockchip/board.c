@@ -87,12 +87,15 @@ __weak int rk_board_init(void)
 #define CPUID_LEN	0x10
 #define CPUID_OFF	0x07
 
+#define MAX_ETHERNET	0x2
+
 static int rockchip_set_ethaddr(void)
 {
 #ifdef CONFIG_ROCKCHIP_VENDOR_PARTITION
-	char buf[ARP_HLEN_ASCII + 1];
-	u8 ethaddr[ARP_HLEN];
-	int ret;
+	char buf[ARP_HLEN_ASCII + 1], mac[16];
+	u8 ethaddr[ARP_HLEN * MAX_ETHERNET] = {0};
+	int ret, i;
+	bool need_write = false, randomed = false;
 
 	ret = vendor_storage_read(LAN_MAC_ID, ethaddr, sizeof(ethaddr));
 	for (i = 0; i < MAX_ETHERNET; i++) {
@@ -131,6 +134,7 @@ static int rockchip_set_ethaddr(void)
 			       __func__, ret);
 	}
 #endif
+
 	return 0;
 }
 
