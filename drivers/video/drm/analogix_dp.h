@@ -28,6 +28,7 @@
 #define ANALOGIX_DP_PLL_REG_4			0x9ec
 #define ANALOGIX_DP_PLL_REG_5			0xa00
 
+#define ANALOGIX_DP_BIAS			0x124
 #define ANALOGIX_DP_PD				0x12c
 
 #define ANALOGIX_DP_LANE_MAP			0x35C
@@ -540,6 +541,7 @@ struct analogix_dp_plat_data {
 };
 
 struct analogix_dp_device {
+	int id;
 	struct udevice *dev;
 	void *reg_base;
 	struct phy phy;

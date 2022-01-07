@@ -12,6 +12,9 @@
 struct rockchip_vp {
 	bool enable;
 	u8 bg_ovl_dly;
+	int output_type;
+	u32 plane_mask;
+	int cursor_plane;
 };
 
 struct rockchip_crtc {
@@ -21,6 +24,7 @@ struct rockchip_crtc {
 	struct rockchip_vp vps[4];
 	bool hdmi_hpd : 1;
 	bool active : 1;
+	bool assign_plane : 1;
 };
 
 struct rockchip_crtc_funcs {

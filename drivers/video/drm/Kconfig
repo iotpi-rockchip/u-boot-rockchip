@@ -11,6 +11,11 @@ menuconfig DRM_ROCKCHIP
 	  This driver supports the on-chip video output device, and targets the
 	  Rockchip RK3288 and RK3399.
 
+config DRM_MEM_RESERVED_SIZE_MBYTES
+	int "Size in Mega Bytes"
+	depends on DRM_ROCKCHIP
+	default 32
+
 config DRM_DP_HELPER
 	bool
 	depends on DRM_ROCKCHIP
@@ -133,3 +138,10 @@ config ROCKCHIP_DRM_TVE
 	  Choose this option to enable support for Rockchip TVE.
 	  Rockchip rk322x and rk322xh SoC has TVE can be used, and
 	  say Y to enable TVE driver.
+
+config ROCKCHIP_CUBIC_LUT_SIZE
+	int "Rockchip cubic lut size"
+	depends on DRM_ROCKCHIP
+	default 0
+	help
+	  Used to calc cubic lut size.
