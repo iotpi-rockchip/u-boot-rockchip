@@ -500,24 +500,28 @@ static int display_get_timing_from_dts(struct panel_state *panel_state,
 				       struct drm_display_mode *mode)
 {
 	struct rockchip_panel *panel = panel_state->panel;
-	int phandle;
-	ofnode timing, native_mode;
+	struct ofnode_phandle_args args;
+	ofnode dt, timing;
+	int ret;
 
-	timing = dev_read_subnode(panel->dev, "display-timings");
-	if (!ofnode_valid(timing))
-		return -ENODEV;
+	dt = dev_read_subnode(panel->dev, "display-timings");
+	if (ofnode_valid(dt)) {
+		ret = ofnode_parse_phandle_with_args(dt, "native-mode", NULL,
+						     0, 0, &args);
+		if (ret)
+			return ret;
 
-	native_mode = ofnode_find_subnode(timing, "timing");
-	if (!ofnode_valid(native_mode)) {
-		phandle = ofnode_read_u32_default(timing, "native-mode", -1);
-		native_mode = np_to_ofnode(of_find_node_by_phandle(phandle));
-		if (!ofnode_valid(native_mode)) {
-			printf("failed to get display timings from DT\n");
-			return -ENXIO;
-		}
+		timing = args.node;
+	} else {
+		timing = dev_read_subnode(panel->dev, "panel-timing");
 	}
 
-	display_get_detail_timing(native_mode, mode);
+	if (!ofnode_valid(timing)) {
+		printf("failed to get display timings from DT\n");
+		return -ENXIO;
+	}
+
+	display_get_detail_timing(timing, mode);
 
 	return 0;
 }
@@ -1088,6 +1092,7 @@ static int display_logo(struct display_state *state)
 	crtc_state->src_x = 0;
 	crtc_state->src_y = 0;
 	crtc_state->ymirror = logo->ymirror;
+	crtc_state->rb_swap = 0;
 
 	crtc_state->dma_addr = (u32)(unsigned long)logo->mem + logo->offset;
 	crtc_state->xvir = ALIGN(crtc_state->src_w * logo->bpp, 32) >> 5;
