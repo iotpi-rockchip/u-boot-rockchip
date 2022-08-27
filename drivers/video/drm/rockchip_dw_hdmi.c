@@ -7,6 +7,7 @@
 #include <common.h>
 #include <boot_rkimg.h>
 #include <asm/io.h>
+#include <dm/of_access.h>
 #include <dm/device.h>
 #include <linux/dw_hdmi.h>
 #include <linux/hdmi.h>
@@ -188,7 +189,8 @@ static const struct dw_hdmi_phy_config rockchip_phy_config[] = {
 
 static unsigned int drm_rk_select_color(struct hdmi_edid_data *edid_data,
 					struct base_screen_info *screen_info,
-					enum dw_hdmi_devtype dev_type)
+					enum dw_hdmi_devtype dev_type,
+					bool output_bus_format_rgb)
 {
 	struct drm_display_info *info = &edid_data->display_info;
 	struct drm_display_mode *mode = edid_data->preferred_mode;
@@ -236,6 +238,9 @@ static unsigned int drm_rk_select_color(struct hdmi_edid_data *edid_data,
 	default:
 		break;
 	}
+
+	if (output_bus_format_rgb)
+		color_format = DRM_HDMI_OUTPUT_DEFAULT_RGB;
 
 	if (color_format == DRM_HDMI_OUTPUT_DEFAULT_RGB &&
 	    info->edid_hdmi_dc_modes & DRM_EDID_HDMI_DC_30)
@@ -326,7 +331,8 @@ void drm_rk_selete_output(struct hdmi_edid_data *edid_data,
 			  struct connector_state *conn_state,
 			  unsigned int *bus_format,
 			  struct overscan *overscan,
-			  enum dw_hdmi_devtype dev_type)
+			  enum dw_hdmi_devtype dev_type,
+			  bool output_bus_format_rgb)
 {
 	int ret, i, screen_size;
 	struct base_disp_info base_parameter;
@@ -347,7 +353,7 @@ void drm_rk_selete_output(struct hdmi_edid_data *edid_data,
 	overscan->top_margin = max_scan;
 	overscan->bottom_margin = max_scan;
 
-	if (dev_type == RK3288_HDMI)
+	if (dev_type == RK3288_HDMI || output_bus_format_rgb)
 		*bus_format = MEDIA_BUS_FMT_RGB888_1X24;
 	else
 		*bus_format = MEDIA_BUS_FMT_YUV8_1X24;
@@ -446,7 +452,7 @@ null_basep:
 	drm_rk_select_mode(edid_data, screen_info);
 
 	*bus_format = drm_rk_select_color(edid_data, screen_info,
-					  dev_type);
+					  dev_type, output_bus_format_rgb);
 }
 
 void inno_dw_hdmi_set_domain(void *grf, int status)
@@ -485,7 +491,6 @@ static const struct dw_hdmi_phy_ops inno_dw_hdmi_phy_ops = {
 };
 
 static const struct rockchip_connector_funcs rockchip_dw_hdmi_funcs = {
-	.pre_init = rockchip_dw_hdmi_pre_init,
 	.init = rockchip_dw_hdmi_init,
 	.deinit = rockchip_dw_hdmi_deinit,
 	.prepare = rockchip_dw_hdmi_prepare,
@@ -551,61 +556,41 @@ const struct dw_hdmi_plat_data rk3568_hdmi_drv_data = {
 
 static int rockchip_dw_hdmi_probe(struct udevice *dev)
 {
+	int id;
+	struct rockchip_connector *conn = dev_get_priv(dev);
+
+	id = of_alias_get_id(ofnode_to_np(dev->node), "hdmi");
+	if (id < 0)
+		id = 0;
+
+	rockchip_connector_bind(conn, dev, id, &rockchip_dw_hdmi_funcs, NULL,
+				DRM_MODE_CONNECTOR_HDMIA);
+
 	return 0;
 }
-
-static const struct rockchip_connector rk3568_dw_hdmi_data = {
-	.funcs = &rockchip_dw_hdmi_funcs,
-	.data = &rk3568_hdmi_drv_data,
-};
-
-static const struct rockchip_connector rk3399_dw_hdmi_data = {
-	.funcs = &rockchip_dw_hdmi_funcs,
-	.data = &rk3399_hdmi_drv_data,
-};
-
-static const struct rockchip_connector rk3368_dw_hdmi_data = {
-	.funcs = &rockchip_dw_hdmi_funcs,
-	.data = &rk3368_hdmi_drv_data,
-};
-
-static const struct rockchip_connector rk3288_dw_hdmi_data = {
-	.funcs = &rockchip_dw_hdmi_funcs,
-	.data = &rk3288_hdmi_drv_data,
-};
-
-static const struct rockchip_connector rk3328_dw_hdmi_data = {
-	.funcs = &rockchip_dw_hdmi_funcs,
-	.data = &rk3328_hdmi_drv_data,
-};
-
-static const struct rockchip_connector rk3228_dw_hdmi_data = {
-	.funcs = &rockchip_dw_hdmi_funcs,
-	.data = &rk3228_hdmi_drv_data,
-};
 
 static const struct udevice_id rockchip_dw_hdmi_ids[] = {
 	{
 	 .compatible = "rockchip,rk3568-dw-hdmi",
-	 .data = (ulong)&rk3568_dw_hdmi_data,
+	 .data = (ulong)&rk3568_hdmi_drv_data,
 	}, {
 	 .compatible = "rockchip,rk3399-dw-hdmi",
-	 .data = (ulong)&rk3399_dw_hdmi_data,
+	 .data = (ulong)&rk3399_hdmi_drv_data,
 	}, {
 	 .compatible = "rockchip,rk3368-dw-hdmi",
-	 .data = (ulong)&rk3368_dw_hdmi_data,
+	 .data = (ulong)&rk3368_hdmi_drv_data,
 	}, {
 	 .compatible = "rockchip,rk3288-dw-hdmi",
-	 .data = (ulong)&rk3288_dw_hdmi_data,
+	 .data = (ulong)&rk3288_hdmi_drv_data,
 	}, {
 	 .compatible = "rockchip,rk3328-dw-hdmi",
-	 .data = (ulong)&rk3328_dw_hdmi_data,
+	 .data = (ulong)&rk3328_hdmi_drv_data,
 	}, {
 	 .compatible = "rockchip,rk3128-inno-hdmi",
-	 .data = (ulong)&rk3228_dw_hdmi_data,
+	 .data = (ulong)&rk3228_hdmi_drv_data,
 	}, {
 	 .compatible = "rockchip,rk3228-dw-hdmi",
-	 .data = (ulong)&rk3228_dw_hdmi_data,
+	 .data = (ulong)&rk3228_hdmi_drv_data,
 	}, {}
 };
 
@@ -614,4 +599,5 @@ U_BOOT_DRIVER(rockchip_dw_hdmi) = {
 	.id = UCLASS_DISPLAY,
 	.of_match = rockchip_dw_hdmi_ids,
 	.probe	= rockchip_dw_hdmi_probe,
+	.priv_auto_alloc_size = sizeof(struct rockchip_connector),
 };

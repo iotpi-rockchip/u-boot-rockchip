@@ -37,6 +37,11 @@
 #define GICD_BASE			0xff581000
 #define GICC_BASE			0xff582000
 
+#define OTP_SECURE_BOOT_ENABLE_ADDR	0x0
+#define OTP_SECURE_BOOT_ENABLE_SIZE	1
+#define OTP_RSA_HASH_ADDR		0x10
+#define OTP_RSA_HASH_SIZE		32
+
 #define CONFIG_SYS_BOOTM_LEN	(64 << 20)	/* 64M */
 
 /* MMC/SD IP block */
@@ -70,10 +75,10 @@
 #define ENV_MEM_LAYOUT_SETTINGS \
 	"scriptaddr=0x00500000\0" \
 	"pxefile_addr_r=0x00600000\0" \
-	"fdt_addr_r=0x02f00000\0" \
+	"fdt_addr_r=0x02800000\0" \
 	"kernel_addr_r=0x00058000\0" \
 	"kernel_addr_c=0x2008000\0" \
-	"ramdisk_addr_r=0x02880000\0"
+	"ramdisk_addr_r=0x02900000\0"
 #endif
 
 #include <config_distro_bootcmd.h>

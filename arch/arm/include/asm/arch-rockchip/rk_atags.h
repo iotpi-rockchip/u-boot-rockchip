@@ -19,6 +19,7 @@
 #define ATAG_ATF_MEM		0x54410055
 #define ATAG_PUB_KEY		0x54410056
 #define ATAG_SOC_INFO		0x54410057
+#define ATAG_BOOT1_PARAM	0x54410058
 #define ATAG_MAX		0x544100ff
 
 /* Tag size and offset */
@@ -57,12 +58,21 @@
 #define SERIAL_M_MODE_M2	0x2
 
 /* tag_soc_info.flags */
-#define SOC_FLAGS_ET00		0x45543030
-#define SOC_FLAGS_ET01		0x45543031
-#define SOC_FLAGS_ET02		0x45543032
+#define SOC_FLAGS_TDBT		(1 << 0)
 
 /* pub key programmed magic */
 #define PUBKEY_FUSE_PROGRAMMED	0x4B415352
+
+/*
+ * boot1p.param[2] for ATF/OPTEE. The fields:
+ *
+ * [31:12]: reserved
+ * [4:0]: boot cpu hwid.
+ */
+#define B1P2_BOOT_CPU_MASK	0x00000fff
+
+/* tag_ddr_mem.flags */
+#define DDR_MEM_FLG_EXT_TOP	1
 
 struct tag_serial {
 	u32 version;
@@ -89,7 +99,8 @@ struct tag_ddr_mem {
 	u32 count;
 	u32 version;
 	u64 bank[20];
-	u32 reserved[3];
+	u32 flags;
+	u32 data[2];
 	u32 hash;
 } __packed;
 
@@ -155,6 +166,13 @@ struct tag_soc_info {
 	u32 hash;
 } __packed;
 
+struct tag_boot1p {
+	u32 version;
+	u32 param[8];
+	u32 reserved[4];
+	u32 hash;
+} __packed;
+
 struct tag_core {
 	u32 flags;
 	u32 pagesize;
@@ -179,6 +197,7 @@ struct tag {
 		struct tag_atf_mem	atf_mem;
 		struct tag_pub_key	pub_key;
 		struct tag_soc_info	soc;
+		struct tag_boot1p	boot1p;
 	} u;
 } __aligned(4);
 

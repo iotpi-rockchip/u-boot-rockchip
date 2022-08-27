@@ -94,6 +94,9 @@ int g_dnl_bind_fixup(struct usb_device_descriptor *dev, const char *name)
 		/* Fix to Rockchip's VID and PID for DFU */
 		dev->idVendor  = cpu_to_le16(0x2207);
 		dev->idProduct = cpu_to_le16(0x0107);
+	} else if (!strncmp(name, "usb_dnl_ums", 11)) {
+		dev->idVendor  = cpu_to_le16(0x2207);
+		dev->idProduct = cpu_to_le16(0x0010);
 	}
 
 	return 0;
@@ -248,7 +251,7 @@ static int rkusb_do_read_flash_info(struct fsg_common *common,
 	if (desc->if_type == IF_TYPE_MTD && desc->devnum == BLK_MTD_SPI_NOR) {
 		/* RV1126/RK3308 mtd spinor keep the former upgrade mode */
 #if !defined(CONFIG_ROCKCHIP_RV1126) && !defined(CONFIG_ROCKCHIP_RK3308)
-		finfo.block_size = 0x100; /* Aligned to 128KB */
+		finfo.block_size = 0x80; /* Aligned to 64KB */
 #else
 		finfo.block_size = ROCKCHIP_FLASH_BLOCK_SIZE;
 #endif
@@ -448,6 +451,16 @@ static int rkusb_do_vs_write(struct fsg_common *common)
 			data  = bh->buf + sizeof(struct vendor_item);
 
 			if (!type) {
+				if (vhead->id == HDCP_14_HDMI_ID ||
+				    vhead->id == HDCP_14_HDMIRX_ID ||
+				    vhead->id == HDCP_14_DP_ID) {
+					rc = vendor_handle_hdcp(vhead);
+					if (rc < 0) {
+						curlun->sense_data = SS_WRITE_ERROR;
+						return -EIO;
+					}
+				}
+
 				/* Vendor storage */
 				rc = vendor_storage_write(vhead->id,
 							  (char __user *)data,
@@ -491,6 +504,17 @@ static int rkusb_do_vs_write(struct fsg_common *common)
 					}
 					if (trusty_write_ta_encryption_key((uint32_t *)(data + 8), 8) != 0) {
 						printf("trusty_write_ta_encryption_key error!");
+						curlun->sense_data = SS_WRITE_ERROR;
+						return -EIO;
+					}
+				} else if (memcmp(data, "EHUK", 4) == 0) {
+					if (vhead->size - 8 != 32) {
+						printf("check oem huk size fail!\n");
+						curlun->sense_data = SS_WRITE_ERROR;
+						return -EIO;
+					}
+					if (trusty_write_oem_huk((uint32_t *)(data + 8), 8) != 0) {
+						printf("trusty_write_oem_huk error!");
 						curlun->sense_data = SS_WRITE_ERROR;
 						return -EIO;
 					}
@@ -643,6 +667,11 @@ static int rkusb_do_get_storage_info(struct fsg_common *common,
 	case IF_TYPE_RKNAND:
 		media = BOOT_TYPE_NAND;
 		break;
+
+	case IF_TYPE_NVME:
+		media = BOOT_TYPE_PCIE;
+		break;
+
 	default:
 		break;
 	}
@@ -676,7 +705,7 @@ static int rkusb_do_read_capacity(struct fsg_common *common,
 	 * bit[10:63}: Reserved.
 	 */
 	memset((void *)&buf[0], 0, len);
-	if (type == IF_TYPE_MMC || type == IF_TYPE_SD)
+	if (type == IF_TYPE_MMC || type == IF_TYPE_SD || type == IF_TYPE_NVME)
 		buf[0] = BIT(0) | BIT(2) | BIT(4);
 	else
 		buf[0] = BIT(0) | BIT(4);
@@ -691,10 +720,11 @@ static int rkusb_do_read_capacity(struct fsg_common *common,
 		buf[0] |= (1 << 6);
 #endif
 
-#if defined(CONFIG_ROCKCHIP_RK3568)
+#if defined(CONFIG_ROCKCHIP_NEW_IDB)
 	buf[1] = BIT(0);
 #endif
-	buf[1] |= BIT(1);
+	buf[1] |= BIT(1); /* Switch Storage */
+	buf[1] |= BIT(2); /* LBAwrite Parity */
 
 	/* Set data xfer size */
 	common->residue = len;
@@ -842,6 +872,29 @@ static int rkusb_cmd_process(struct fsg_common *common,
 	}
 
 	return rc;
+}
+
+int rkusb_do_check_parity(struct fsg_common *common)
+{
+	int ret = 0, rc;
+	u32 parity, i, usb_parity, lba, len;
+	static u32 usb_check_buffer[1024 * 256];
+
+	usb_parity = common->cmnd[9] | (common->cmnd[10] << 8) |
+			(common->cmnd[11] << 16) | (common->cmnd[12] << 24);
+
+	if (common->cmnd[0] == SC_WRITE_10 && (usb_parity)) {
+		lba = get_unaligned_be32(&common->cmnd[2]);
+		len = common->data_size_from_cmnd >> 9;
+		rc = blk_dread(&ums[common->lun].block_dev, lba, len, usb_check_buffer);
+		parity = 0x000055aa;
+		for (i = 0; i < len * 128; i++)
+			parity += usb_check_buffer[i];
+		if (!rc || parity != usb_parity)
+			common->phase_error = 1;
+	}
+
+	return ret;
 }
 
 DECLARE_GADGET_BIND_CALLBACK(rkusb_ums_dnl, fsg_add);
